@@ -1,3 +1,6 @@
+# Path to records database
+dbpath: fmma.db
+
 # Producer number
 username: 123456
 
