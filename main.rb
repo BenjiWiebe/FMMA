@@ -1,7 +1,11 @@
 #!/usr/bin/ruby
 require 'base64'
 require 'yaml'
-require './lib.rb'
+require_relative 'lib.rb'
+
+puts "Content-Type: text/plain"
+puts ""
+
 #TODO if this months entries are < 3, check if this month has any entries in the db yet. if not, then download last months before inserting this months. maybe save this months in a temporary hash
 outfile = "/tmp/fmma.txt"
 cfgfile = 'fmma.config'
