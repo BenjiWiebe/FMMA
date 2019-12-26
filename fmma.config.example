@@ -1,0 +1,10 @@
+# Producer number
+username: 123456
+
+# All passwords are base64 encoded
+# You can encode by running: echo -n password | base64
+# Login password (base64 encoded)
+password: cGFzc3dvcmQ=
+
+# Document password (probably the same as login password)
+docpassword: cGFzc3dvcmQ=
