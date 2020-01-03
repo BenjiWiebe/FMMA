@@ -5,55 +5,73 @@ require 'pry'
 require 'sqlite3'
 
 class FMMA
-	Schema = <<-SQL
-CREATE TABLE IF NOT EXISTS data
-(
-	year TEXT NOT NULL,
-	month TEXT NOT NULL,
-	date TEXT NOT NULL,
-	butterfat TEXT NOT NULL,
-	protein TEXT NOT NULL,
-	othslds TEXT NOT NULL,
-	lactose TEXT NOT NULL,
-	scc TEXT NOT NULL,
-	mun TEXT NOT NULL,
-	UNIQUE(year, month, date)
-)
-SQL
-	def initialize(txtdoc = '/tmp/fmma.txt', dbpath = 'db/fmma.db')
-		@txtdoc = txtdoc
-		@dbpath = dbpath
+	def initialize(config)
+		@txtdoc = config["outfile"]
 		@login_init = 'https://secure.fmmacentral.com/Login.asp'
 		@login_post = 'https://secure.fmmacentral.com/login_validate.asp'
 		@download_url = 'https://secure.fmmacentral.com/File_Download.asp'
 		@csrftoken = ''
 		@data = []
 		@mech = Mechanize.new
+		@mainpage = nil
+		@config = config
 	end
-	def login(username, password)
+	
+	def get_password
+		Base64.decode64(@config["password"])
+	end
+	def get_docpassword
+		Base64.decode64(@config["docpassword"])
+	end
+	private :get_password, :get_docpassword
+
+	def login()
 		loginpage = @mech.get(@login_init)
 		nl = Nokogiri::HTML(loginpage.body)
 		@csrftoken = nl.at_xpath('//input[@name=\'hiddCSRFToken\']')['value']
-		@page = @mech.post(@login_post,  {'txbxUsername' => username, 'txbxPassword' => password, 'hiddCSRFToken' => @csrftoken, 'btnSubmit' => 'submit'})
+		resp = @mech.post(@login_post,  {'txbxUsername' => @config["username"], 'txbxPassword' => get_password(), 'hiddCSRFToken' => @csrftoken, 'btnSubmit' => 'submit'})
+		@mainpage = Nokogiri::HTML(resp.body)
 	end
-	def download(docpass, prevmonth=0)
-		npage = Nokogiri::HTML(@page.body)
-		forms = npage.css('form[action="/File_Download.asp"]')
+	def download(reportform)
 		inputs = {}
-		forms[prevmonth].css('input').each do |input|
+		reportform.css('input').each do |input|
 			inputs[input["name"]] = input["value"]
 		end
-
 		dl = @mech.post(@download_url, inputs)
 		File.open(@txtdoc + '.pdf', "wb") do |f|
 			f.write(dl.body)
 		end
 
+		docpass = get_docpassword()
 		`pdftotext -nopgbrk -opw #{docpass} -upw #{docpass} -layout #{@txtdoc + '.pdf'} #{@txtdoc}`
-		raise Exception unless $?.success? 
+		raise "PDFtoText failure" unless $?.success? 
 
 		File.unlink(@txtdoc + '.pdf')
 		return @txtdoc
+	end
+	def download_latest
+		avail = list_available
+		download(avail.first[1])
+	end
+
+	# Get list of producer reports that are currently available
+	# @return [Hash] Chronologically reverse-sorted list of reports, date => report
+	def list_available
+		all = @mainpage.xpath('//input[@type=\'submit\']')
+		if all.length < 1
+			raise "No reports found"
+		end
+		reports = {}
+		all.each do |r|
+			# Out of "Producer Component Tests 201912 PDF", get the first part of it that is digits only
+			date = r["value"].split.select{|x| x =~ /\d+/ }.first
+
+			# Add to the results a mapping of date => parent form element, to pass to #download
+			reports[date] = r.parent
+		end
+		
+		# Sort the reports such that newest is first
+		return reports.sort.reverse.to_h
 	end
 	def process_txt
 		monthnames = %w{january february march april may june july august september october november december}
@@ -90,40 +108,8 @@ SQL
 			puts "Format changed."
 			exit 1
 		end
-		return @data
-	end
-	def get_db
-		@db = SQLite3::Database.new @dbpath unless @db.is_a? SQLite3::Database
-		@db.execute Schema if File.empty? @dbpath
-		return @db
-	end
-	def insert_data
-		sql = "INSERT OR IGNORE INTO DATA(YEAR,MONTH,DATE,BUTTERFAT,PROTEIN,OTHSLDS,LACTOSE,SCC,MUN) VALUES(?,?,?,?,?,?,?,?,?)"
-		changes = 0
-		begin
-			@data.map! {|d| d.pop if d.last == '*' }
-			db = get_db
-			stm = db.prepare sql
-			rs = nil
-			db.transaction
-			@data.each do |d|
-				rs = stm.execute *d
-			end
-			db.commit
-			changes = db.changes
-		rescue SQLite3::Exception => e
-			puts "Sqlite error"
-			puts e
-			db.rollback
-		ensure
-			stm.close if stm
-		end
-
-		return changes > 0
-	end
-	def cleanup
 		File.unlink @txtdoc if File.exists? @txtdoc
-		@db.close if @db
-		@db = nil
+		#TODO Use some sort of mktemp thing
+		return @data
 	end
 end
